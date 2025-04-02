@@ -7,8 +7,6 @@ from sklearn.preprocessing import StandardScaler
 # Load data
 data = pd.read_csv("BEP_imputed.csv")
 
-print(data.isna().sum())
-
 # Ensure patient_id is treated as a categorical variable
 if 'PATIENT_ID' not in data.columns:
     raise ValueError("The dataset must contain a 'PATIENT_ID' column.")
