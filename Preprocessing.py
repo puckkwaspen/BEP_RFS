@@ -490,7 +490,7 @@ def add_time_features(df):
     # Time-based feature columns
     columns_time_feat = [
         'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium',
-        'Magnesium', 'Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic', 'Diastolic'
+        'Magnesium', 'Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic', 'Diastolic', 'Leucocytes'
     ]
 
     # Create copies of the DataFrame for each output
