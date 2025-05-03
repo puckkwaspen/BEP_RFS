@@ -26,6 +26,7 @@ import pandas as pd
 import numpy as np
 import miceforest as mf
 from sklearn.impute import SimpleImputer
+import random
 
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
 output_imputed = "BEP_imputed.csv"
@@ -429,12 +430,14 @@ def mice_imputation(df):
         mean_match_candidates=5
     )
 
-    # Average the imputed datasets
-    imputed_datasets = [kernel.complete_data(dataset=i) for i in range(3)]
-    imputed_avg = sum(imputed_datasets) / len(imputed_datasets)
+    # Randomly select one of the imputed datasets
+    random_index = random.randint(0, kernel.num_imputations - 1)
 
-    # Merge averaged imputed values back into the original dataframe
-    df[cols_to_impute] = imputed_avg
+    # Extract the randomly selected imputed dataset
+    imputed_df = kernel.complete_data(dataset=random_index)
+
+    # Merge imputed values back into the original dataframe
+    df[cols_to_impute] = imputed_df[cols_to_impute]
 
     # Recalculate BMI where missing
     df['BMI'] = df['BMI'].fillna(df['Weight (kg)'] / (df['Height (m)'] ** 2))

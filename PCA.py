@@ -27,8 +27,7 @@ eigenvalues = pca.explained_variance_
 
 plt.figure(figsize=(8,5))
 plt.plot(range(1, len(explained_var)+1), explained_var, marker='o', label='Explained Variance')
-plt.axhline(y=1, color='r', linestyle='--', label='Kaiser Threshold (eigenvalue = 1)')
-plt.title('Scree Plot')
+plt.title('Explained Proportion of Variance per Principal Component')
 plt.xlabel('Principal Component')
 plt.ylabel('Variance Explained Ratio')
 plt.grid(True)
@@ -45,9 +44,9 @@ plt.show()
 
 print(f"The Principal Components explain the following proportion of the variance: {pca.explained_variance_ratio_}\n")
 
-# Find number of components for Kaiser criterion
-kaiser_components = np.sum(eigenvalues > 1)
-print(f"Kaiser criterion (>70% of variance) suggests keeping {kaiser_components} components.\n")
+# # Find number of components for Kaiser criterion
+# kaiser_components = np.sum(eigenvalues > 1)
+# print(f"Kaiser criterion (>70% of variance) suggests keeping {kaiser_components} components.\n")
 
 # Create a plot to visualize the PCA structure of the first 2 PCs
 plt.scatter(X_pca[:, 0], X_pca[:, 1])
@@ -59,15 +58,15 @@ plt.show()
 ####### Feature Importance Scores #######
 
 # Get PCA components
-loadings = pca.components_[:3, :]  # shape: (3, 12), for the first 3 PCs, adjust if needed
+loadings = pca.components_[:3, :]  # for the first n PCs, adjust if needed
 
-# Compute average absolute loading per feature across the first 3 PCs
-feature_importance = np.mean(np.abs(loadings), axis=0)
+# Compute average absolute loading per feature across the PCs
+feature_importance = np.median(np.abs(loadings), axis=0)
 
 # Map to feature names
 importance_df = pd.DataFrame({
     'Feature': features,
-    'Importance (avg |loading| over PC1–PC3)': feature_importance
-}).sort_values(by='Importance (avg |loading| over PC1–PC3)', ascending=False)
+    'Importance (avg |loading| over PC1–PC8)': feature_importance
+}).sort_values(by='Importance (avg |loading| over PC1–PC8)', ascending=False)
 
 print(importance_df)
