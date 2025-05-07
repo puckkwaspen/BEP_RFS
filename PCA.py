@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+import seaborn as sns
 
 # Load the dataset
 df = pd.read_csv("BEP_imputed.csv")
@@ -18,47 +19,87 @@ scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
 # run the Principal Component Analysis
-pca = PCA() # n_components=5
+pca = PCA(n_components=8) # n_components=5
 X_pca = pca.fit_transform(X_scaled)
 
-# Step 3: Scree plot
-explained_var = pca.explained_variance_ratio_
-eigenvalues = pca.explained_variance_
 
-plt.figure(figsize=(8,5))
-plt.plot(range(1, len(explained_var)+1), explained_var, marker='o', label='Explained Variance')
-plt.title('Explained Proportion of Variance per Principal Component')
+############################ VISUALIZATIONS AND FEATURE IMPORTANCE SCORES ############################
+
+### HEATMAP ###
+loadings = pca.components_.T * np.sqrt(pca.explained_variance_)
+plt.figure(figsize=(10, 8))
+sns.heatmap(loadings,
+            annot=True,
+            cmap='coolwarm',
+            xticklabels=['PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6', 'PC7', 'PC8'],
+            vmin=-1,
+            vmax=1,
+            yticklabels=features)
+plt.title('Feature Importance in Principal Components')
+plt.show()
+#############################
+
+### BIPLOT ###
+coeff = pca.components_.T
+
+xs = X_pca[:, 0]
+ys = X_pca[:, 1]
+plt.figure(figsize=(10, 8))
+plt.scatter(xs, ys, color="blue", alpha=0.5)
+
+plt.xlabel("PC1")
+plt.ylabel("PC2")
+plt.title("Biplot")
+plt.show()
+#############################
+
+
+### EXPLAINED AND CUMULATIVE VARIANCE ###
+explained_var = pca.explained_variance_ratio_
+cumulative_variance = np.cumsum(explained_var)
+
+plt.figure(figsize=(10, 6))
+
+# Explained variance (solid dark blue)
+plt.plot(
+    range(1, len(explained_var) + 1),
+    explained_var,
+    marker='o',
+    color='blue',
+    label='Explained Variance'
+)
+
+# Cumulative variance (dotted lighter blue)
+plt.plot(
+    range(1, len(cumulative_variance) + 1),
+    cumulative_variance,
+    marker='o',
+    linestyle='--',
+    color='blue',
+    label='Cumulative Explained Variance'
+)
+
+# Add horizontal line at 0.9
+plt.axhline(y=0.9, color='orange', linestyle='-', linewidth=1.5, label='90% Threshold')
+
+# Labels and formatting
+plt.title('Explained and Cumulative Variance per Principal Component')
 plt.xlabel('Principal Component')
-plt.ylabel('Variance Explained Ratio')
+plt.ylabel('Variance Ratio')
 plt.grid(True)
 plt.legend()
+plt.tight_layout()
 plt.show()
 
-cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-plt.plot(range(1, len(cumulative_variance)+1), cumulative_variance, marker='o')
-plt.xlabel('Number of Components')
-plt.ylabel('Cumulative Explained Variance')
-plt.grid(True)
-plt.title('Cumulative Variance Explained')
-plt.show()
 
 print(f"The Principal Components explain the following proportion of the variance: {pca.explained_variance_ratio_}\n")
+############################################
 
-# # Find number of components for Kaiser criterion
-# kaiser_components = np.sum(eigenvalues > 1)
-# print(f"Kaiser criterion (>70% of variance) suggests keeping {kaiser_components} components.\n")
-
-# Create a plot to visualize the PCA structure of the first 2 PCs
-plt.scatter(X_pca[:, 0], X_pca[:, 1])
-plt.xlabel('PC1')
-plt.ylabel('PC2')
-plt.title('PCA Projection')
-plt.show()
 
 ####### Feature Importance Scores #######
 
 # Get PCA components
-loadings = pca.components_[:3, :]  # for the first n PCs, adjust if needed
+loadings = pca.components_[:7, :]  # for the first n PCs, adjust if needed
 
 # Compute average absolute loading per feature across the PCs
 feature_importance = np.median(np.abs(loadings), axis=0)

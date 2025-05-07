@@ -1,5 +1,5 @@
 """
-Preprocessing Pipeline for DAISY Clinical Data
+Preprocessing Pipeline for DAISY Clinical Test Data
 ==============================================
 
 This script handles the preprocessing, merging, and imputation of lab results, vital signs,
@@ -29,87 +29,75 @@ from sklearn.impute import SimpleImputer
 import random
 
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
-output_imputed = "BEP_imputed.csv"
-output_imputed_time_feat = "BEP_imputed_time_feat.csv"
-output_delta = "BEP_imputed_delta.csv"
-output_percentage_change = "BEP_imputed_percentage_change.csv"
+output_imputed_test = "BEP_imputed_TEST.csv"
+output_imputed_time_feat_test = "BEP_imputed_time_feat_TEST.csv"
+output_delta_test = "BEP_imputed_delta_TEST.csv"
+output_percentage_change_test = "BEP_imputed_percentage_change_TEST.csv"
 
-
-def lab(df):
+def demo_test(df_demo, df_main):
     """
-    Preprocesses laboratory data from the DAISY dataset.
-
-    This function filters relevant lab measurements (e.g., ALT, AST, Glucose),
-    converts and formats date information, reshapes the data into a wide format,
-    renames columns to standardized names, and filters out patients with fewer
-    than 3 lab records. It also handles special characters in test results
-    (like "<8") and ensures numerical columns are correctly typed.
-
-    :param df: pandas DataFrame containing raw lab data with columns such as
-               'O_ITEM', 'UITSLAG_WAARDE', 'p_DATE_BEPALING', 'pid', 'intid', etc.
-    :return: pandas DataFrame in wide format with cleaned and converted lab values,
-             indexed by ROW and including only patients with ≥3 measurements.
+    This function generates masked IDs where needed. It checks which masked IDs already exist,
+    and generates new one with similar length. The function then converts the data to the needed
+    type and renames and reorders the column.
+    :param df_demo: dataframe that still needs to be (partially) masked
+    :param df_main: dataframe that is already masked
+    :return: the masked dataframe
     """
+    main_int = df_main['INTAKE_ID'].dropna().astype(int).unique().tolist()
+    new_int = df_demo['intid'].dropna().astype(int).unique().tolist()
+    main_pid = df_main['PATIENT_ID'].dropna().astype(int).unique().tolist()
+    new_pid = df_demo['pid'].dropna().astype(int).unique().tolist()
 
-    # Filter relevant lab items
-    df = df[df['O_ITEM'].isin([
-        'Kalium', 'Leucocyten', 'ALAT (GPT)', 'ASAT (GOT)',
-        'Fosfaat anorganisch', 'Magnesium', 'Glucose (n.n.)'
-    ])].copy()
+    # Combine sets for uniqueness checks
+    existing_int_ids = set(main_int + new_int)
+    existing_pids = set(main_pid + new_pid)
 
-    # Convert date and extract UNIX timestamp
-    df['p_DATE_BEPALING'] = pd.to_datetime(df['p_DATE_BEPALING'])
-    df['DATE'] = df['p_DATE_BEPALING'].dt.normalize()
-    df['DATE'] = df['DATE'].astype('int64') // 10 ** 9
+    # Determine typical lengths
+    typical_int_len = int(pd.Series(main_int).astype(str).str.len().median())
+    typical_pid_len = int(pd.Series(main_pid).astype(str).str.len().median())
 
-    # Drop unneeded columns
-    df.drop(columns=['STATUS_AANVRAAG', 'O_STATUS_UITSLAG', 'p_DATE_BEPALING'], inplace=True)
+    # Apply masking for missing values
+    for idx, row in df_demo.iterrows():
+        if pd.isna(row['intid']):
+            df_demo.at[idx, 'intid'] = generate_unique_id(typical_int_len, existing_int_ids)
+        if pd.isna(row['pid']):
+            df_demo.at[idx, 'pid'] = generate_unique_id(typical_pid_len, existing_pids)
+
+    df = df_demo.drop_duplicates(subset='pid', keep='first').copy()
+
+    # Safe datetime conversion with dayfirst
+    df['datum_baseline'] = pd.to_datetime(df['datum_baseline'], dayfirst=True)
+
+    # Convert to UNIX timestamp
+    df['DATE'] = df['datum_baseline'].astype('int64') // 10 ** 9
+
+    # Convert to integers
+    df['intid'] = df['intid'].astype(int)
+    df['pid'] = df['pid'].astype(int)
 
     # Rename columns
-    df.rename(columns={
+    df = df.rename(columns={
         'pid': 'PATIENT_ID',
         'intid': 'INTAKE_ID',
-        'O_ITEM': 'CHEMICAL_VALUE',
-        'UITSLAG_WAARDE': 'VALUE_RESULT',
-        'NORMAALWAARDE': 'NORMAL_RANGE',
-        'seq_num-lab': 'SEQUENCE'
-    }, inplace=True)
+        'leeftijd_baseline': 'AGE',
+        'Geslacht': 'SEX'
+    })
 
-    # Sort and pivot
-    df.sort_values(by='PATIENT_ID', inplace=True)
-    df = df.pivot_table(
-        index=['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE'],
-        columns='CHEMICAL_VALUE',
-        values='VALUE_RESULT',
-        aggfunc='first'
-    ).rename_axis(None, axis=1).reset_index()
+    # Map gender
+    df['SEX'] = df['SEX'].map({'Vrouw': 1, 'Man': 0})
 
-    # Add row index
-    df['ROW'] = range(1, len(df) + 1)
-    df.set_index('ROW', inplace=True)
-
-    # Keep only patients with 3 or more measurements
-    patient_counts = df['PATIENT_ID'].value_counts()
-    df = df[df['PATIENT_ID'].isin(patient_counts[patient_counts >= 3].index)]
-
-    # Rename columns to clean variable names
-    df.rename(columns={
-        'ASAT (GOT)': 'AST',
-        'ALAT (GPT)': 'ALT',
-        'Fosfaat anorganisch': 'Phosphate',
-        'Kalium': 'Potassium',
-        'Leucocyten': 'Leucocytes',
-        'Glucose (n.n.)': 'Glucose'
-    }, inplace=True)
-
-    # Clean and convert columns
-    for col in ['ALT', 'AST']:
-        df[col] = df[col].apply(clean_column)
-
-    to_convert = ['Magnesium', 'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes']
-    df[to_convert] = df[to_convert].apply(pd.to_numeric, errors='coerce')
+    # Reorder columns
+    df = df[['PATIENT_ID', 'INTAKE_ID', 'DATE', 'SEX', 'AGE', 'cid', 'ggzob_id']]
 
     return df
+
+def generate_unique_id(length, existing_ids):
+    while True:
+        new_id = random.randint(10**(length - 1), 10**length - 1)
+        if new_id not in existing_ids:
+            existing_ids.add(new_id)  # Add to set to prevent reuse
+            return new_id
+
 
 def clean_column(value):
     """
@@ -130,68 +118,144 @@ def clean_column(value):
             return np.nan  # Replace letters with NaN
     return value  # Keep numeric values as they are
 
+def lab_test(df_lab, df_demo):
 
-def vitals(df):
-    """
-    Processes and reshapes vital signs data from the DAISY dataset.
+    # Filter relevant lab items
+    df = df_lab[df_lab['O_AANVR_UITSLAG_ITEM_LANG'].isin([
+        'Kalium', 'Leucocyten', 'ALAT (GPT)', 'ASAT (GOT)',
+        'Fosfaat anorganisch', 'Magnesium', 'Glucose (n.n.)'
+    ])].copy()
 
-    This function handles transformation of vital signs data (e.g., blood pressure, BMI, temperature)
-    by converting timestamps, melting long-format measurements into wide format, cleaning and renaming
-    columns, computing BMI from height and weight, and aggregating measurements per patient-intake-date.
+    # Convert date and extract UNIX timestamp
+    df['DT_BEPALING'] = pd.to_datetime(df['DT_BEPALING'], dayfirst=True, errors='coerce')
+    df['DATE'] = df['DT_BEPALING'].dt.normalize()
+    df['DATE'] = df['DATE'].astype('int64') // 10 ** 9
 
-    :param df: pandas DataFrame containing raw vital signs data, with columns such as:
-               'pid', 'intid', 'O_METING', 'WAARDE1', 'WAARDE2', 'p_DT_METING', etc.
-    :return: pandas DataFrame with one row per patient per intake per date, containing vital signs like
-             'Weight (kg)', 'Height (m)', 'BMI', 'Systolic', 'Diastolic', 'Temperature (C)', and sequence numbers.
-    """
-    # Convert to datetime and extract date/time
-    df['p_DT_METING'] = pd.to_datetime(df['p_DT_METING'])
-    df['DATE'] = df['p_DT_METING'].dt.normalize()
-    df['TIME'] = df['p_DT_METING'].dt.time
-    df['DATE'] = df['DATE'].astype('int64') // 10**9  # Unix timestamp
+    df['ggzob_id'] = df['ggzob_id'].astype(int)
 
-    # Drop unnecessary columns
-    df.drop(columns=['Split', 'p_DT_METING', 'TIME'], inplace=True)
+    # Drop unneeded columns
+    df.drop(columns=['STATUS_AANVRAAG', 'O_STATUS_UITSLAG', 'DT_BEPALING', 'SEQ_ZPAT_PATIENT', 'UITSLAG_CONCLUSIE',
+                         'UITSLAG_TEKST_LAB', 'NORMAALWAARDE', 'AANVRAAG_NUMMER', 'UITSLAGREGEL', 'intid'],
+                inplace=True)
+
+    df = df[df['ggzob_id'].isin(df_demo['ggzob_id'])]
+
+    # get the pseudonimized patient_id and intake_id from the df_demo
+    df = df.merge(df_demo[['PATIENT_ID', 'ggzob_id', 'INTAKE_ID']], on='ggzob_id', how='left')
 
     # Rename columns
     df.rename(columns={
-        'pid': 'PATIENT_ID',
-        'intid': 'INTAKE_ID',
-        'O_METING': 'MEASUREMENT ITEM',
-        'WAARDE1': 'VALUE 1',
-        'WAARDE2': 'VALUE 2',
-        'seq_num-vitals': 'SEQUENCE'
+        'O_AANVR_UITSLAG_ITEM_LANG': 'CHEMICAL_VALUE',
+        'UITSLAG_WAARDE': 'VALUE_RESULT'
     }, inplace=True)
 
+    # Sort and pivot
+    df.sort_values(by='PATIENT_ID', inplace=True)
+
+    df_lab = df.pivot_table(
+        index=['PATIENT_ID', 'INTAKE_ID', 'DATE', 'ggzob_id'],
+        columns='CHEMICAL_VALUE',
+        values='VALUE_RESULT',
+        aggfunc='first'
+    ).rename_axis(None, axis=1).reset_index()
+
+    # Add row index
+    df_lab['ROW'] = range(1, len(df_lab) + 1)
+    df_lab.set_index('ROW', inplace=True)
+
+    # Keep only patients with 3 or more measurements
+    patient_counts = df_lab['PATIENT_ID'].value_counts()
+    df_lab = df_lab[df_lab['PATIENT_ID'].isin(patient_counts[patient_counts >= 3].index)]
+
+    # Rename columns to clean variable names
+    df_lab.rename(columns={
+        'ASAT (GOT)': 'AST',
+        'ALAT (GPT)': 'ALT',
+        'Fosfaat anorganisch': 'Phosphate',
+        'Kalium': 'Potassium',
+        'Leucocyten': 'Leucocytes',
+        'Glucose (n.n.)': 'Glucose'
+    }, inplace=True)
+
+    # Clean and convert columns
+    for col in ['ALT', 'AST']:
+        df_lab[col] = df_lab[col].apply(clean_column)
+
+    to_convert = ['Magnesium', 'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes']
+    df_lab[to_convert] = df_lab[to_convert].apply(pd.to_numeric, errors='coerce')
+
+    df_lab['SEQUENCE'] = df_lab.groupby(['PATIENT_ID', 'INTAKE_ID'])['DATE'].rank(method='first').astype(int)
+
+    return df_lab
+
+
+def vitals_test(df_vitals, df_demo):
+    # Convert to datetime and extract date/time
+    df_vitals['DT_METING'] = pd.to_datetime(df_vitals['DT_METING'], dayfirst=True, errors='coerce')
+    df_vitals['DATE'] = df_vitals['DT_METING'].dt.normalize()
+    df_vitals['TIME'] = df_vitals['DT_METING'].dt.time
+    df_vitals['DATE'] = df_vitals['DATE'].astype('int64') // 10 ** 9  # Unix timestamp
+
     # Filter relevant measurement items
-    df = df[df['MEASUREMENT ITEM'].isin([
+    df_vitals = df_vitals[df_vitals['O_METING'].isin([
         'Body Mass Index', 'Tensie / Pols', 'Temperatuur (c)'
     ])].copy()
 
+    df_vitals[['ggzob_id', 'cid']] = df_vitals[['ggzob_id', 'cid']].astype(int)
+
+    df_vitals = df_vitals[df_vitals['ggzob_id'].isin(df_demo['ggzob_id'])]
+
+    # get the pseudonimized patient_id and intake_id from the df_demo
+    df_vitals = df_vitals.merge(
+        df_demo[['ggzob_id', 'PATIENT_ID', 'INTAKE_ID']],
+        on='ggzob_id',
+        how='left'
+    )
+
+    # Drop unnecessary columns
+    df_vitals.drop(columns=['DT_METING', 'TIME', 'OPMERKING', 'intid', 'pid'], inplace=True)
+
+    # Rename columns
+    df_vitals.rename(columns={
+        'O_METING': 'MEASUREMENT ITEM',
+        'WAARDE1': 'VALUE 1',
+        'WAARDE2': 'VALUE 2'
+    }, inplace=True)
+
     # Sort and reset index
-    df.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE'], inplace=True)
-    df.reset_index(drop=True, inplace=True)
+    df_vitals.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'DATE'], inplace=True)
+    df_vitals.reset_index(drop=True, inplace=True)
 
     # Melt value columns
-    df_melted = df.melt(
-        id_vars=['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'MEASUREMENT ITEM'],
+    df_melted = df_vitals.melt(
+        id_vars=['PATIENT_ID', 'INTAKE_ID', 'ggzob_id', 'cid', 'DATE', 'MEASUREMENT ITEM'],
         value_vars=['VALUE 1', 'VALUE 2'],
         var_name='VALUE_TYPE',
         value_name='VALUE'
     )
 
-    # Make measurement item labels unique (e.g., "Tensie / Pols 1", "Tensie / Pols 2")
-    df_melted['MEASUREMENT ITEM'] = df_melted['MEASUREMENT ITEM'] + " " + df_melted.groupby(
-        ['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'MEASUREMENT ITEM']
-    ).cumcount().add(1).astype(str)
+    # Append ' 1' or ' 2' based on VALUE_TYPE to MEASUREMENT ITEM
+    df_melted['MEASUREMENT ITEM'] = (
+                df_melted['MEASUREMENT ITEM'] + ' ' + df_melted['VALUE_TYPE'].str.extract(r'(\d)')[0].fillna(''))
 
     # Pivot to wide format
     df_pivot = df_melted.pivot_table(
-        index=['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE'],
+        index=['PATIENT_ID', 'INTAKE_ID', 'DATE'],
         columns='MEASUREMENT ITEM',
         values='VALUE',
         aggfunc='first'
     ).reset_index()
+
+    # Handle integer-like columns with commas
+    cols_to_int = ['Body Mass Index 1', 'Tensie / Pols 1', 'Tensie / Pols 2']
+    for col in cols_to_int:
+        df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce').astype('Int64')  # Convert to nullable int
+
+    # Handle float columns (only need one conversion per column)
+    cols_to_float = ['Body Mass Index 2', 'Temperatuur (c) 1']
+    for col in cols_to_float:
+        df_pivot[col] = df_pivot[col].astype(str).str.replace(',', '.', regex=False)
+        df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce').astype(float)
 
     # Calculate Height and BMI
     df_pivot['Height (m)'] = df_pivot['Body Mass Index 1'] / 100
@@ -210,7 +274,7 @@ def vitals(df):
 
     # Reorder columns
     df_pivot = df_pivot[[
-        'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE',
+        'PATIENT_ID', 'INTAKE_ID', 'DATE',
         'Weight (kg)', 'Height (m)', 'BMI',
         'Systolic', 'Diastolic', 'Temperature (C)'
     ]]
@@ -233,94 +297,44 @@ def vitals(df):
     df_final['SEQUENCE'] = df_final.groupby(['PATIENT_ID', 'INTAKE_ID']).cumcount() + 1
     df_final = df_final.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'DATE'])
 
+    df_final.columns.name = None
+
+    desired_order = [
+        'PATIENT_ID', 'INTAKE_ID', 'DATE', 'SEQUENCE',
+        'Height (m)', 'Weight (kg)', 'BMI',
+        'Systolic', 'Diastolic', 'Temperature (C)'
+    ]
+
+    df_final = df_final[desired_order]
+
     return df_final
 
 
-def age(df):
-    """
-    Processes patient demographic data, filtering for relevant cases and formatting key fields.
+def merge_test(df_demo, df_lab, df_vitals):
 
-    This function filters the input dataset to include only patients diagnosed with Anorexia Nervosa,
-    converts date fields to UNIX timestamps, standardizes column names, maps gender to binary values,
-    and selects key demographic variables (AGE and SEX) along with identifiers.
-
-    :param df: pandas DataFrame containing demographic data, including fields like
-               'pid', 'intid', 'EDtype', 'p_startdate', 'Main-Age', and 'Main-Bsex'.
-    :return: pandas DataFrame with columns ['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE',
-             'DATE', 'SEX', 'AGE'] for patients with Anorexia Nervosa only.
-    """
-    # Convert date column and extract UNIX timestamp
-    df['p_startdate'] = pd.to_datetime(df['p_startdate'])
-    df['DATE'] = df['p_startdate'].dt.normalize()
-    df['DATE'] = df['DATE'].astype('int64') // 10**9  # UNIX timestamp
-
-    # Filter only patients with Anorexia nervosa
-    df = df[df['EDtype'] == 'Anorexia nervosa'].copy()
-
-    # Convert INTAKE_ID to int
-    df['intid'] = df['intid'].astype(int)
-
-    # Select relevant columns
-    df = df[[
-        'intid', 'seq_num-edeq', 'pid', 'DATE', 'Main-Age', 'Main-Bsex'
-    ]]
-
-    # Rename columns
-    df.rename(columns={
-        'pid': 'PATIENT_ID',
-        'intid': 'INTAKE_ID',
-        'seq_num-edeq': 'SEQUENCE',
-        'Main-Age': 'AGE',
-        'Main-Bsex': 'SEX'
-    }, inplace=True)
-
-    # Map gender to binary
-    df['SEX'] = df['SEX'].map({'Vrouw': 1, 'Man': 0})
-
-    # Reorder columns
-    df = df[['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'SEX', 'AGE']]
-
-    return df
-
-def merge_lab_age(df_lab, df_age):
-    """
-    Merges preprocessed lab test data with patient demographic data (age and sex).
-
-    This function:
-    - Filters lab records to include only patients also present in the demographics dataset.
-    - Merges lab and age data on 'PATIENT_ID' and 'INTAKE_ID'.
-    - Resolves overlapping column names (e.g., DATE, SEQUENCE).
-    - Aggregates lab and demographic values by patient and date, keeping the first
-      available value for each measurement.
-
-    :param df_lab: pandas DataFrame with cleaned and reshaped lab test data, including fields like
-                   'PATIENT_ID', 'INTAKE_ID', 'ALT', 'AST', 'Phosphate', etc.
-    :param df_age: pandas DataFrame with demographic info, including 'AGE' and 'SEX'.
-    :return: pandas DataFrame merged on patient-date level, containing lab results and demographics.
-    """
     # Ensure only patients in both datasets are kept
-    df_lab = df_lab[df_lab['PATIENT_ID'].isin(df_age['PATIENT_ID'])].copy()
+    df_lab = df_lab[df_lab['PATIENT_ID'].isin(df_demo['PATIENT_ID'])].copy()
 
     # Merge lab and age data
-    df_merged = df_lab.merge(df_age, on=['PATIENT_ID', 'INTAKE_ID'], how='left')
+    df_merged = df_lab.merge(df_demo, on=['PATIENT_ID', 'INTAKE_ID'], how='left')
 
     # Rename overlapping columns to keep only relevant ones
     df_merged.rename(columns={
-        'SEQUENCE_x': 'SEQUENCE',
-        'DATE_x': 'DATE'
+        'DATE_x': 'DATE',
+        'ggzob_id_x': 'ggzob_id',
     }, inplace=True)
 
     # Drop unnecessary duplicates
-    df_merged.drop(columns=['DATE_y', 'SEQUENCE_y'], inplace=True)
+    df_merged.drop(columns=['DATE_y', 'ggzob_id_y'], inplace=True)
 
     # Reorder columns
     df_merged = df_merged[[
-        'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'AGE', 'SEX',
+        'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'cid', 'ggzob_id', 'DATE', 'AGE', 'SEX',
         'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'
     ]]
 
     # Aggregate by patient and date, taking the first valid entry per group
-    df_final = df_merged.groupby(['PATIENT_ID', 'DATE'], as_index=False).agg({
+    df_tog = df_merged.groupby(['PATIENT_ID', 'DATE'], as_index=False).agg({
         'INTAKE_ID': 'first',
         'SEQUENCE': 'first',
         'AGE': 'first',
@@ -334,28 +348,9 @@ def merge_lab_age(df_lab, df_age):
         'Magnesium': 'first'
     })
 
-    return df_final
-
-
-def merge_final(df_lab_age, df_vitals):
-    """
-        Merges lab + demographic data with vitals measurements into a unified clinical dataset.
-
-        This function:
-        - Joins lab/age and vitals datasets using ['DATE', 'PATIENT_ID', 'INTAKE_ID'].
-        - Resolves column name conflicts (e.g., SEQUENCE) from merging.
-        - Reorders columns to a consistent and interpretable layout.
-        - Converts lab results to numeric types.
-        - Fills missing height values using forward/backward fill per patient.
-        - Cleans known outlier values in temperature and replaces zeroes in blood pressure with NaN.
-
-        :param df_lab_age: pandas DataFrame containing merged lab results and demographic information.
-        :param df_vitals: pandas DataFrame with vital sign measurements (e.g., blood pressure, temperature).
-        :return: pandas DataFrame combining lab, demographic, and vital data for each patient-intake-date.
-    """
     # Merge lab+age data with vitals on DATE, PATIENT_ID, INTAKE_ID
     df_combined = pd.merge(
-        df_lab_age, df_vitals,
+        df_tog, df_vitals,
         on=['DATE', 'PATIENT_ID', 'INTAKE_ID'],
         how='left',
         suffixes=('_final', '_merged')
@@ -386,7 +381,7 @@ def merge_final(df_lab_age, df_vitals):
     df_combined['Height (m)'] = df_combined.groupby('PATIENT_ID')['Height (m)'].transform(lambda x: x.ffill().bfill())
 
     # Clean specific outlier or invalid values
-    df_combined['Temperature (C)'] = df_combined['Temperature (C)'].replace([43, 33.7], float('nan'))
+    df_combined['Temperature (C)'] = df_combined['Temperature (C)'].replace([45.5], float('nan'))
     df_combined['Systolic'] = df_combined['Systolic'].replace(0, float('nan'))
     df_combined['Diastolic'] = df_combined['Diastolic'].replace(0, float('nan'))
 
@@ -471,6 +466,49 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
 
     return df
 
+
+def RFS_labels(df):
+    # Define electrolytes to monitor
+    electrolytes = ['Phosphate', 'Potassium', 'Magnesium']
+
+    # Create placeholder columns for drop %
+    for col in electrolytes:
+        df[f'{col}_DROP_%'] = None
+
+    # Group by patient-intake
+    rfs_labeled_groups = []
+
+    for _, group in df.groupby(['PATIENT_ID', 'INTAKE_ID']):
+        group = group.sort_values('SEQUENCE')
+        baseline = group.iloc[0]
+
+        # Calculate % drop from baseline
+        for col in electrolytes:
+            base_value = baseline[col]
+            group[f'{col}_DROP_%'] = (base_value - group[col]) / base_value * 100
+
+        # Create RFS label if any electrolyte drop ≥ 10%
+        group['RFS'] = ((group[[f'{col}_DROP_%' for col in electrolytes]] >= 20).any(axis=1)).astype(int)
+
+        rfs_labeled_groups.append(group)
+
+    # Combine groups
+    df_final = pd.concat(rfs_labeled_groups).reset_index(drop=True)
+
+    # Drop the temporary drop % columns
+    drop_cols = [f'{col}_DROP_%' for col in electrolytes]
+    df_final.drop(columns=drop_cols, inplace=True)
+
+    # Move RFS column just after 'SEX'
+    cols = df_final.columns.tolist()
+    if 'RFS' in cols:
+        cols.remove('RFS')
+        insert_at = cols.index('SEX') + 1 if 'SEX' in cols else len(cols)
+        cols.insert(insert_at, 'RFS')
+        df_final = df_final[cols]
+
+    return df_final
+
 def add_time_features(df):
     """
     Generates time-based features by calculating the absolute and percentage change
@@ -502,10 +540,10 @@ def add_time_features(df):
 
     for col in columns_time_feat:
         # Delta (absolute change)
-        df_delta[f'{col}_delta'] = df_delta.groupby('PATIENT_ID')[col].diff()
+        df_delta[f'{col}_delta'] = df_delta.groupby('PATIENT_ID')[col].diff().fillna(0)
 
         # Percent change
-        df_pct[f'{col}_percent_change'] = df_pct.groupby('PATIENT_ID')[col].pct_change() * 100
+        df_pct[f'{col}_percent_change'] = df_pct.groupby('PATIENT_ID')[col].pct_change().fillna(0) * 100
 
     # Drop the original columns from both
     df_delta.drop(columns=columns_time_feat, inplace=True)
@@ -514,44 +552,43 @@ def add_time_features(df):
     return df_delta, df_pct
 
 
+print("🔄 Loading and preprocessing demographics data...")
+df_demo = demo_test(pd.read_csv("../anonymized_Labels_refeeding.csv", sep='\t'), pd.read_csv("BEP_imputed.csv"))
+print("✅ Demographics data preprocessed.\n")
+
 print("🔄 Loading and preprocessing lab data...")
-lab_clean = lab(pd.read_csv("../../annonymizedDatasets/maskedDAIsy_LabCombinedNew.csv", sep="\t"))
+df_lab = lab_test(pd.read_csv("../anonymized_Labels_refeeding_lab.csv", sep='\t'), df_demo)
 print("✅ Lab data preprocessed.\n")
 
 print("🔄 Loading and preprocessing vitals data...")
-vitals_clean = vitals(pd.read_csv("../../annonymizedDatasets/maskedDAIsy_Vitals.csv", sep="\t"))
+df_vitals = vitals_test(pd.read_csv("../anonymized_Labels_refeeding_metingen.csv", sep='\t' ), df_demo)
 print("✅ Vitals data preprocessed.\n")
 
-print("🔄 Loading and preprocessing demographics data...")
-age_clean = age(pd.read_csv("../../annonymizedDatasets/maskedDAIsy_AllDatasetsCombinedWoRepIntakes_v1.tsv", sep="\t"))
-print("✅ Demographics data preprocessed.\n")
-
-print("🔗 Merging lab data with demographics data...")
-df_merge_lab_age = merge_lab_age(lab_clean, age_clean)
-print("✅ Lab + demographics data merged.\n")
-
-print("🔗 Merging with vitals data...")
-df_merged = merge_final(df_merge_lab_age, vitals_clean)
-print("✅ Final merged dataset ready.\n")
+print("🔗 Merging datasets together...")
+df_merge= merge_test(df_demo, df_lab, df_vitals)
+print("✅ Datasets merged.\n")
 
 print("📊 Here's a quick look at the merged dataset (first 10 rows):\n")
-print(df_merged.head(10))
+print(df_merge.head(10))
 print()
 
 print("⚙️ Starting MICE imputation on selected clinical features...")
-df_imputed = mice_imputation(df_merged)
+df_impute = mice_imputation(df_merge)
 print("✅ MICE imputation complete.\n")
 
 print("🛠️ Performing final simple imputations for AGE, HEIGHT, and SEX...")
+print("🛠️ Adding labels for RFS...")
 print("🛠️ Saving the imputed dataset to a CSV file.")
-df_final = final_imputations_and_export(df_imputed)
-df_final.to_csv(output_imputed, index=False)
-print(f"✅ Final dataset saved to: {output_imputed}\n")
+df_final = final_imputations_and_export(df_impute)
+df_final = RFS_labels(df_final)
+df_final.to_csv(output_imputed_test, index=False)
+print(f"✅ Final dataset saved to: {output_imputed_test}\n")
 
 print("⏱️ Generating time-based features (delta and percent change)...")
 df_deltas, df_pct_changes = add_time_features(df_final)
-df_deltas.to_csv(output_delta, index=False)
-df_pct_changes.to_csv(output_percentage_change, index=False)
+df_deltas.to_csv(output_delta_test, index=False)
+df_pct_changes.to_csv(output_percentage_change_test, index=False)
 print("✅ Time-based delta and percent change features created.\n")
-print(f"✅ Delta dataset saved to: {output_delta}\n")
-print(f"✅ Percentage change dataset saved to: {output_percentage_change}\n")
+print(f"✅ Delta dataset saved to: {output_delta_test}\n")
+print(f"✅ Percentage change dataset saved to: {output_percentage_change_test}\n")
+
