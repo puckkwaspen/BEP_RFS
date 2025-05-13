@@ -1,43 +1,49 @@
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import IsolationForest
+import numpy as np
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
+from sklearn.ensemble import IsolationForest
+from sklearn.metrics import f1_score, precision_score, recall_score
 
 # Load data
 data = pd.read_csv("BEP_imputed.csv")
+test_data = pd.read_csv("BEP_imputed_TEST.csv")
 
-# Ensure patient_id is treated as a categorical variable
-if 'PATIENT_ID' not in data.columns:
-    raise ValueError("The dataset must contain a 'PATIENT_ID' column.")
+# Separate test labels (and drop them from feature set)
+y_test_true = test_data['RFS'].values  # ground truth labels
+X_test = test_data.drop(columns=['RFS'])
 
-# Step 1: Get unique patient IDs
-unique_patients = data['PATIENT_ID'].unique()
+# Keep train data as is (assuming no labels in it)
+X_train = data
 
-# Step 2: Split patient IDs into train and test sets (e.g., 80% train, 20% test)
-train_patients, test_patients = train_test_split(unique_patients, test_size=0.2, random_state=42)
-
-# Step 3: Assign data to train/test based on patient_id
-X_train = data[data['PATIENT_ID'].isin(train_patients)]
-X_test = data[data['PATIENT_ID'].isin(test_patients)]
-
-print(f"Total Patients: {len(unique_patients)}")
-print(f"Train Patients: {len(train_patients)}, Train Samples: {len(X_train)}")
-print(f"Test Patients: {len(test_patients)}, Test Samples: {len(X_test)}")
-
-# Standardize the train & test data
+# Standardize
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)  # Use same scaler!
+X_test_scaled = scaler.transform(X_test)
 
-# Train Isolation Forest on training set
-model = IsolationForest(n_estimators=100, contamination=0.1, random_state=42)
+# Train Isolation Forest
+model = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
 model.fit(X_train_scaled)
 
-# Predict anomalies on both train and test sets
+# Predict anomalies
 y_train_pred = model.predict(X_train_scaled)  # 1 = normal, -1 = anomaly
 y_test_pred = model.predict(X_test_scaled)
 
-print(f"Anomalies in Train Set: {np.sum(y_train_pred == -1)}")
-print(f"Anomalies in Test Set: {np.sum(y_test_pred == -1)}")
+# Convert IsolationForest predictions to binary: 1 = anomaly, 0 = normal
+y_test_pred_binary = (y_test_pred == -1).astype(int)
+
+# Assume RFS = 1 means an actual anomaly
+y_test_true_binary = (y_test_true == 1).astype(int)
+
+# Compute metrics
+precision = precision_score(y_test_true_binary, y_test_pred_binary)
+recall = recall_score(y_test_true_binary, y_test_pred_binary)
+f1 = f1_score(y_test_true_binary, y_test_pred_binary)
+
+# Output
+print(f"Anomalies identified in training set: {np.sum(y_train_pred == -1)}")
+print(f"Anomalies identified in test set:    {np.sum(y_test_pred == -1)}")
+print(f"True anomalies in test set (according to ASPEN): {np.sum(y_test_true_binary == 1)}")
+
+print(f"Precision: {precision:.4f}")
+print(f"Recall:    {recall:.4f}")
+print(f"F1 Score:  {f1:.4f}")

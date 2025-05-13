@@ -27,6 +27,7 @@ import numpy as np
 import miceforest as mf
 from sklearn.impute import SimpleImputer
 import random
+import time
 
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
 output_imputed = "BEP_imputed.csv"
@@ -502,10 +503,10 @@ def add_time_features(df):
 
     for col in columns_time_feat:
         # Delta (absolute change)
-        df_delta[f'{col}_delta'] = df_delta.groupby('PATIENT_ID')[col].diff()
+        df_delta[f'{col}_delta'] = df_delta.groupby('PATIENT_ID')[col].diff().fillna(0)
 
         # Percent change
-        df_pct[f'{col}_percent_change'] = df_pct.groupby('PATIENT_ID')[col].pct_change() * 100
+        df_pct[f'{col}_percent_change'] = df_pct.groupby('PATIENT_ID')[col].pct_change().fillna(0) * 100
 
     # Drop the original columns from both
     df_delta.drop(columns=columns_time_feat, inplace=True)
