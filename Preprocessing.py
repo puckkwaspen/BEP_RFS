@@ -30,6 +30,7 @@ import random
 import time
 
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
+output = "BEP.csv"
 output_imputed = "BEP_imputed.csv"
 output_imputed_time_feat = "BEP_imputed_time_feat.csv"
 output_delta = "BEP_imputed_delta.csv"
@@ -391,6 +392,18 @@ def merge_final(df_lab_age, df_vitals):
     df_combined['Systolic'] = df_combined['Systolic'].replace(0, float('nan'))
     df_combined['Diastolic'] = df_combined['Diastolic'].replace(0, float('nan'))
 
+    # Convert DATE from UNIX to datetime (for calculation)
+    df_combined['DATE'] = pd.to_datetime(df_combined['DATE'], unit='s')
+
+    # Compute DAYS_SINCE_INTAKE per patient-intake group
+    df_combined['DAYS_SINCE_ADMISSION'] = (
+        df_combined.groupby(['PATIENT_ID', 'INTAKE_ID'])['DATE']
+        .transform(lambda x: (x - x.min()).dt.days)
+    )
+
+    # Convert DATE back to UNIX time
+    df_combined['DATE'] = df_combined['DATE'].astype('int64') // 10 ** 9
+
     return df_combined
 
 
@@ -472,6 +485,26 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
 
     return df
 
+def standardize_by_first_timepoint(df, feature_cols):
+    id_col = 'PATIENT_ID'
+    time_col = 'SEQUENCE'
+    df_standardized = df.copy()
+
+    for pid, group in df.groupby(id_col):
+        first_time = group[time_col].min()
+        baseline = group[group[time_col] == first_time]
+
+        mean = baseline[feature_cols].mean()
+        std = baseline[feature_cols].std(ddof=0)
+
+        # Avoid division by zero
+        std = std.replace(0, 1)
+
+        standardized_values = (group[feature_cols] - mean) / std
+        df_standardized.loc[group.index, feature_cols] = standardized_values
+
+    return df_standardized
+
 def add_time_features(df):
     """
     Generates time-based features by calculating the absolute and percentage change
@@ -533,7 +566,8 @@ print("✅ Lab + demographics data merged.\n")
 
 print("🔗 Merging with vitals data...")
 df_merged = merge_final(df_merge_lab_age, vitals_clean)
-print("✅ Final merged dataset ready.\n")
+df_merged.to_csv(output, index=False)
+print("✅ Final merged dataset ready and saved to a CSV.\n")
 
 print("📊 Here's a quick look at the merged dataset (first 10 rows):\n")
 print(df_merged.head(10))
@@ -544,8 +578,12 @@ df_imputed = mice_imputation(df_merged)
 print("✅ MICE imputation complete.\n")
 
 print("🛠️ Performing final simple imputations for AGE, HEIGHT, and SEX...")
+print("🛠️ Standardising all the data...")
 print("🛠️ Saving the imputed dataset to a CSV file.")
 df_final = final_imputations_and_export(df_imputed)
+df_final = standardize_by_first_timepoint(df_final,
+                                          ['Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic','Diastolic',
+                                           'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'])
 df_final.to_csv(output_imputed, index=False)
 print(f"✅ Final dataset saved to: {output_imputed}\n")
 

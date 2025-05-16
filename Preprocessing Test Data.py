@@ -466,6 +466,26 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
 
     return df
 
+def standardize_by_first_timepoint(df, feature_cols):
+    id_col = 'PATIENT_ID'
+    time_col = 'SEQUENCE'
+    df_standardized = df.copy()
+
+    for pid, group in df.groupby(id_col):
+        first_time = group[time_col].min()
+        baseline = group[group[time_col] == first_time]
+
+        mean = baseline[feature_cols].mean()
+        std = baseline[feature_cols].std(ddof=0)
+
+        # Avoid division by zero
+        std = std.replace(0, 1)
+
+        standardized_values = (group[feature_cols] - mean) / std
+        df_standardized.loc[group.index, feature_cols] = standardized_values
+
+    return df_standardized
+
 
 def RFS_labels(df):
     # Define electrolytes to monitor
@@ -578,9 +598,13 @@ print("✅ MICE imputation complete.\n")
 
 print("🛠️ Performing final simple imputations for AGE, HEIGHT, and SEX...")
 print("🛠️ Adding labels for RFS...")
+print("🛠️ Standardising all the data...")
 print("🛠️ Saving the imputed dataset to a CSV file.")
 df_final = final_imputations_and_export(df_impute)
 df_final = RFS_labels(df_final)
+df_final = standardize_by_first_timepoint(df_final,
+                                          ['Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic','Diastolic',
+                                           'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'])
 df_final.to_csv(output_imputed_test, index=False)
 print(f"✅ Final dataset saved to: {output_imputed_test}\n")
 
