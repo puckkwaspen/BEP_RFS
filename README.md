@@ -3,7 +3,11 @@
 ---
 
 ## 📚 Overview
-This project explores
+Quick order of running for now
+1. Install any relevant packages (there is no requirements file yet)
+2. Run preprocessing and preprocessing test data, this will create the data CSVs
+3. Run the models file, this will generate output in txt files that show the results for the models under all hyperparam combinations. There is also a file that shows the best models
+4. There is a file for exploration of the results per model (so three in total) these create the plots in the thesis. 
 
 ### 🗂 Key Information
 - **Paper**: [???](#)  
