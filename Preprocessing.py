@@ -30,11 +30,11 @@ import random
 import time
 
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
-output = "BEP.csv"
-output_imputed = "BEP_imputed.csv"
-output_imputed_time_feat = "BEP_imputed_time_feat.csv"
-output_delta = "BEP_imputed_delta.csv"
-output_percentage_change = "BEP_imputed_percentage_change.csv"
+output = "Data/BEP.csv"
+output_imputed = "Data/BEP_imputed.csv"
+output_imputed_time_feat = "Data/BEP_imputed_time_feat.csv"
+output_delta = "Data/BEP_imputed_delta.csv"
+output_percentage_change = "Data/BEP_imputed_percentage_change.csv"
 
 
 def lab(df):
@@ -256,15 +256,16 @@ def age(df):
     df['DATE'] = df['p_startdate'].dt.normalize()
     df['DATE'] = df['DATE'].astype('int64') // 10**9  # UNIX timestamp
 
-    # Filter only patients with Anorexia nervosa
+    # Filter only patients with Anorexia nervosa and women
     df = df[df['EDtype'] == 'Anorexia nervosa'].copy()
+    df = df[df['Main-Bsex'] != 'Man']
 
     # Convert INTAKE_ID to int
     df['intid'] = df['intid'].astype(int)
 
     # Select relevant columns
     df = df[[
-        'intid', 'seq_num-edeq', 'pid', 'DATE', 'Main-Age', 'Main-Bsex'
+        'intid', 'seq_num-edeq', 'pid', 'DATE', 'Main-Age'
     ]]
 
     # Rename columns
@@ -273,14 +274,10 @@ def age(df):
         'intid': 'INTAKE_ID',
         'seq_num-edeq': 'SEQUENCE',
         'Main-Age': 'AGE',
-        'Main-Bsex': 'SEX'
     }, inplace=True)
 
-    # Map gender to binary
-    df['SEX'] = df['SEX'].map({'Vrouw': 1, 'Man': 0})
-
     # Reorder columns
-    df = df[['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'SEX', 'AGE']]
+    df = df[['PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'AGE']]
 
     return df
 
@@ -317,7 +314,7 @@ def merge_lab_age(df_lab, df_age):
 
     # Reorder columns
     df_merged = df_merged[[
-        'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'AGE', 'SEX',
+        'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE', 'AGE',
         'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'
     ]]
 
@@ -326,7 +323,6 @@ def merge_lab_age(df_lab, df_age):
         'INTAKE_ID': 'first',
         'SEQUENCE': 'first',
         'AGE': 'first',
-        'SEX': 'first',
         'ALT': 'first',
         'AST': 'first',
         'Phosphate': 'first',
@@ -370,7 +366,7 @@ def merge_final(df_lab_age, df_vitals):
     # Reorder columns
     new_column_order = [
         'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE',
-        'AGE', 'SEX', 'Weight (kg)', 'Height (m)', 'BMI',
+        'AGE', 'Weight (kg)', 'Height (m)', 'BMI',
         'Temperature (C)', 'Systolic', 'Diastolic',
         'ALT', 'AST', 'Phosphate', 'Glucose',
         'Potassium', 'Leucocytes', 'Magnesium'
@@ -476,12 +472,11 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
     num_imputer = SimpleImputer(strategy='mean')
     df[['AGE', 'Height (m)']] = num_imputer.fit_transform(df[['AGE', 'Height (m)']])
 
-    # Mode imputation for categorical column
-    mode_imputer = SimpleImputer(strategy='most_frequent')
-    df[['SEX']] = mode_imputer.fit_transform(df[['SEX']])
-
     # Recalculate BMI
     df['BMI'] = df['Weight (kg)'] / (df['Height (m)'] ** 2)
+
+    df.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'DATE'], inplace=True)
+    df['SEQUENCE'] = df.groupby(['PATIENT_ID', 'INTAKE_ID']).cumcount() + 1
 
     return df
 
@@ -507,43 +502,43 @@ def standardize_by_first_timepoint(df, feature_cols):
 
 def add_time_features(df):
     """
-    Generates time-based features by calculating the absolute and percentage change
-    in key clinical values over time for each patient.
+    Generates time-based features by calculating the per-day absolute and percentage change
+    in key clinical values for each patient, accounting for variable time intervals.
 
-    This function:
-    - Computes the absolute difference (delta) between consecutive time points for each patient.
-    - Computes the percentage change relative to the previous value.
-    - Returns two separate DataFrames:
-        1. One with delta features (e.g., ALT_delta)
-        2. One with percent change features (e.g., ALT_percent_change)
-    - Drops the original clinical measurement columns from both outputs.
-
-    :param df: pandas DataFrame containing time-series clinical data, including
-               lab values and vitals per patient over time.
+    :param df: pandas DataFrame with a 'days_since_admission' column and clinical features.
     :return: Tuple of two pandas DataFrames:
-             - df_delta: with only the delta (absolute change) features
-             - df_pct: with only the percent change features
+             - df_delta_per_day: with delta per day features (e.g., ALT_delta_per_day)
+             - df_pct_per_day: with percent change per day features (e.g., ALT_percent_change_per_day)
     """
-    # Time-based feature columns
     columns_time_feat = [
         'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium',
         'Magnesium', 'Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic', 'Diastolic', 'Leucocytes'
     ]
 
-    # Create copies of the DataFrame for each output
+    df = df.sort_values(by=['PATIENT_ID', 'DAYS_SINCE_ADMISSION']).copy()
+
+    # Compute time differences
+    df['day_diff'] = df.groupby('PATIENT_ID')['DAYS_SINCE_ADMISSION'].diff().fillna(1)
+
+    # To avoid division by zero
+    df['day_diff'] = df['day_diff'].replace(0, 1)
+
+    # Create new DataFrames for delta and percentage change per day
     df_delta = df.copy()
     df_pct = df.copy()
 
     for col in columns_time_feat:
-        # Delta (absolute change)
-        df_delta[f'{col}_delta'] = df_delta.groupby('PATIENT_ID')[col].diff().fillna(0)
+        # Delta per day
+        raw_diff = df.groupby('PATIENT_ID')[col].diff()
+        df_delta[f'{col}_delta_per_day'] = (raw_diff / df['day_diff']).fillna(0)
 
-        # Percent change
-        df_pct[f'{col}_percent_change'] = df_pct.groupby('PATIENT_ID')[col].pct_change().fillna(0) * 100
+        # Percent change per day
+        pct_change = df.groupby('PATIENT_ID')[col].pct_change()
+        df_pct[f'{col}_percent_change_per_day'] = (pct_change / df['day_diff']).fillna(0) * 100
 
-    # Drop the original columns from both
-    df_delta.drop(columns=columns_time_feat, inplace=True)
-    df_pct.drop(columns=columns_time_feat, inplace=True)
+    # Drop original columns and temporary ones
+    df_delta.drop(columns=columns_time_feat + ['day_diff'], inplace=True)
+    df_pct.drop(columns=columns_time_feat + ['day_diff'], inplace=True)
 
     return df_delta, df_pct
 
@@ -577,13 +572,13 @@ print("⚙️ Starting MICE imputation on selected clinical features...")
 df_imputed = mice_imputation(df_merged)
 print("✅ MICE imputation complete.\n")
 
-print("🛠️ Performing final simple imputations for AGE, HEIGHT, and SEX...")
+print("🛠️ Performing final simple imputations for AGE, and HEIGHT...")
 print("🛠️ Standardising all the data...")
 print("🛠️ Saving the imputed dataset to a CSV file.")
 df_final = final_imputations_and_export(df_imputed)
-df_final = standardize_by_first_timepoint(df_final,
-                                          ['Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic','Diastolic',
-                                           'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'])
+# df_final = standardize_by_first_timepoint(df_final,
+#                                           ['Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic','Diastolic',
+#                                            'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'])
 df_final.to_csv(output_imputed, index=False)
 print(f"✅ Final dataset saved to: {output_imputed}\n")
 

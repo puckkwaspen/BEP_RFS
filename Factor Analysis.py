@@ -1,21 +1,26 @@
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 import matplotlib.pyplot as plt
 from factor_analyzer import FactorAnalyzer
 import warnings
+import seaborn as sns
 
 # Ignore this warning (safe to do so)
 warnings.filterwarnings("ignore", message="'force_all_finite' was renamed to 'ensure_all_finite'")
 
 # Load data
-df = pd.read_csv("BEP_imputed.csv")
+df = pd.read_csv("Data/BEP_imputed.csv")
 
 # Select enzyme + electrolyte features
 features = ['Phosphate', 'Potassium', 'Magnesium', 'ALT', 'AST']
 X = df[features]
-X_scaled = StandardScaler().fit_transform(X)
+X_scaled = RobustScaler().fit_transform(X)
 
+sns.kdeplot(np.log1p(df['ALT']), fill=True)
+plt.title('Log-Transformed Density Plot of AST')
+plt.xlabel('log(AST + 1)')
+plt.show()
 
 ################# PLOT 1 --> CORRELATION MATRIX #################
 
