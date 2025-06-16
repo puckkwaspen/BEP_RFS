@@ -149,10 +149,6 @@ Control Group:
 
 ### 📈 Factor Analysis
 1. Run `Factor Analysis.py`.
-2. The script will output plots and factor-based analysis results.
-
-### 📈 Factor Analysis
-1. Run `Factor Analysis.py`.
 2. The script will generate plots and factor-based analysis results used in the thesis.
 
 ### 🤖 Model Training
