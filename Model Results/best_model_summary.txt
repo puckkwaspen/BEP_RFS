@@ -1,0 +1,45 @@
+
+📦 Configuration: RAW
+🏆 Best Model: Isolation Forest
+🔍 Anomalies in training set: 268
+🔍 Anomalies in test set:    132
+🔍 True anomalies in test:   28
+F2 Score:       0.5123
+Precision:      0.1894
+Recall:         0.8929
+Accuracy:       0.5971
+🔧 Hyperparameters:
+  - n_estimators: 50
+  - contamination: 0.2
+  - max_samples: 0.5
+--------------------------------------------------
+
+📦 Configuration: DELTA
+🏆 Best Model: One-Class SVM
+🔍 Anomalies in training set: 266
+🔍 Anomalies in test set:    105
+🔍 True anomalies in test:   28
+F2 Score:       0.5760
+Precision:      0.2381
+Recall:         0.8929
+Accuracy:       0.6960
+🔧 Hyperparameters:
+  - kernel: rbf
+  - nu: 0.2
+  - gamma: scale
+--------------------------------------------------
+
+📦 Configuration: PCT_CHANGE
+🏆 Best Model: Isolation Forest
+🔍 Anomalies in training set: 402
+🔍 Anomalies in test set:    104
+🔍 True anomalies in test:   28
+F2 Score:       0.5093
+Precision:      0.2115
+Recall:         0.7857
+Accuracy:       0.6777
+🔧 Hyperparameters:
+  - n_estimators: 50
+  - contamination: 0.3
+  - max_samples: 0.8
+--------------------------------------------------

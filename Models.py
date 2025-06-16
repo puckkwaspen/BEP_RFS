@@ -1,18 +1,26 @@
+import os
 import pandas as pd
 import numpy as np
 from sklearn.svm import OneClassSVM
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.metrics import fbeta_score, precision_score, recall_score, accuracy_score
 from itertools import product
-import pickle
-import joblib
 from collections import defaultdict
+import warnings
+import pickle
+import random
+
+random.seed(42)
+
+# ignore warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
 
 all_results = {}
 all_logs = []
 all_predictions = {}  # structure: {dataset: {model_name: y_pred}}
+all_model_objects = defaultdict(list)
 
 # Config dict: each entry maps to a dataset pair
 DATASETS = {
@@ -33,22 +41,48 @@ DATASETS = {
 # Parameter grids for each model (for the hyperparameter tuning)
 PARAM_GRIDS = {
     "isolation_forest": {
-        "n_estimators": [50, 100],
-        "contamination": [0.2, 0.4],
-        "max_samples": ['auto', 0.8]
+        "n_estimators": [50, 100, 200],
+        "contamination": [0.3, 0.2, 0.1],
+        "max_samples": ['auto', 0.8, 0.5]
     },
     "one_class_svm": {
-        "kernel": ['rbf'],
-        "nu": [0.1, 0.2],
-        "gamma": [0.01, 0.1]
+    "kernel": ['rbf', 'sigmoid', 'poly'],
+    "nu": [0.01, 0.05, 0.1, 0.2],
+    "gamma": ['scale', 0.001, 0.01, 0.1, 1]
     },
     "lof": {
-        "n_neighbors": [10, 20],
-        "contamination": [0.01, 0.05]
+    "n_neighbors": [5, 10, 20, 30, 50],     # smaller n_neighbors = more local sensitivity
+    "contamination": [0.05, 0.1, 0.15, 0.2],
+    "metric": ['minkowski', 'euclidean', 'manhattan']  # distance metrics
     }
 }
 
 def load_and_preprocess(train_path, test_path):
+    """
+    Loads and preprocesses training and test datasets for modeling.
+
+    This function performs the following steps:
+    - Loads CSV files from the provided paths.
+    - Extracts binary labels for the RFS (Relapse-Free Survival) outcome from the test set.
+    - Drops metadata and label columns that should be excluded from modeling.
+    - Removes columns with near-zero variance from the test set and applies the same filtering to the training set.
+
+    Parameters:
+    ----------
+    train_path : str
+        Path to the CSV file containing the training data.
+    test_path : str
+        Path to the CSV file containing the test data.
+
+    Returns:
+    -------
+    X_train : pd.DataFrame
+        Preprocessed feature matrix for training.
+    X_test : pd.DataFrame
+        Preprocessed feature matrix for testing, aligned with training features.
+    y_test_true_binary : np.ndarray
+        Binary RFS labels for the test set (1 if RFS == 1, else 0).
+    """
     # Columns to exclude from modeling
     exclude_cols = ['DATE', 'SEQUENCE', 'ADMISSION', 'INTAKE_ID', 'PATIENT_ID', 'DAYS_SINCE_ADMISSION']
 
@@ -61,7 +95,7 @@ def load_and_preprocess(train_path, test_path):
 
     # Drop excluded columns + RFS label for features
     X_train = train_df.drop(columns=exclude_cols, errors='ignore')
-    X_test = test_df.drop(columns=exclude_cols + ['RFS'], errors='ignore')
+    X_test = test_df.drop(columns=exclude_cols + ['RFS', 'CONTROL'], errors='ignore')
 
     # Keep only non-constant columns in test set
     non_constant_cols = X_test.loc[:, X_test.std() > 1e-8].columns
@@ -74,15 +108,45 @@ def load_and_preprocess(train_path, test_path):
 
 
 def evaluate_model(model, X_train, X_test, y_true, model_name="Model", is_lof=False, return_preds=False):
-    if is_lof:
-        X_all = np.vstack([X_train, X_test])
-        y_pred_all = model.fit_predict(X_all)
-        y_train_pred = y_pred_all[:len(X_train)]
-        y_test_pred = y_pred_all[len(X_train):]
-    else:
-        model.fit(X_train)
-        y_train_pred = model.predict(X_train)
-        y_test_pred = model.predict(X_test)
+    """
+    Fits an anomaly detection model, generates predictions, and evaluates its performance.
+
+    This function supports models such as scikit-learn's anomaly detection estimators (e.g., IsolationForest, OneClassSVM).
+    Predictions are mapped to binary anomaly labels (1 = anomaly, 0 = normal) based on whether `predict()` returns -1.
+
+    Metrics reported:
+    - Precision, Recall, Accuracy, and F2 Score (with beta=2)
+    - Count of predicted anomalies in training and test sets
+    - Count of true anomalies (based on `y_true`)
+
+    Parameters:
+    ----------
+    model : object
+        A fitted anomaly detection model with `.fit()` and `.predict()` methods.
+    X_train : pd.DataFrame or np.ndarray
+        Feature matrix for training the model.
+    X_test : pd.DataFrame or np.ndarray
+        Feature matrix for testing the model.
+    y_true : array-like of shape (n_samples,)
+        Ground truth binary labels for the test set (1 = true anomaly, 0 = normal).
+    model_name : str, optional (default="Model")
+        Name used for logging and print statements.
+    is_lof : bool, optional (default=False)
+        Reserved for future use (e.g., special handling for Local Outlier Factor).
+    return_preds : bool, optional (default=False)
+        If True, returns raw predictions and additional diagnostic values.
+
+    Returns:
+    -------
+    tuple
+        If return_preds is False:
+            (precision, recall, accuracy, f2, log, anomalies_train, anomalies_test, true_anomalies)
+        If return_preds is True:
+            (precision, recall, accuracy, f2, log, y_test_pred, anomalies_train, anomalies_test, true_anomalies)
+    """
+    model.fit(X_train)
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
 
     y_test_pred_binary = (y_test_pred == -1).astype(int)
 
@@ -117,6 +181,7 @@ def evaluate_model(model, X_train, X_test, y_true, model_name="Model", is_lof=Fa
 
 all_model_metrics = defaultdict(lambda: defaultdict(list))  # config_name -> model_name -> list of metric dicts
 
+# loops through all combinations and evaluates the models, the results are saved to txt files and pickle files
 for config_name, paths in DATASETS.items():
     X_train_scaled, X_test_scaled, y_test_true_binary = load_and_preprocess(paths['train'], paths['test'])
 
@@ -136,11 +201,6 @@ for config_name, paths in DATASETS.items():
         iso.fit(X_train_scaled)
         if not hasattr(iso, "n_features_"):
             iso.n_features_ = X_train_scaled.shape[1]
-        # Save the corresponding scaled data
-        # x_test_filename = f"Pickle/X_test_scaled_{config_name}.pkl"
-        # joblib.dump(X_test_scaled, x_test_filename)
-        # x_train_filename = f"Pickle/X_train_scaled_{config_name}.pkl"
-        # joblib.dump(X_train_scaled, x_train_filename)
 
         precision, recall, accuracy, f2, log, y_preds, anomalies_train, anomalies_test, true_anomalies = evaluate_model(
             iso, X_train_scaled, X_test_scaled, y_test_true_binary,
@@ -163,13 +223,15 @@ for config_name, paths in DATASETS.items():
         all_logs.append(full_log)
 
         model_id = f"Isolation Forest (n_estimators={n_estimators}, contamination={contamination}, max_samples={max_samples})"
+        all_model_objects[config_name].append((model_id, iso))
         all_predictions[config_name][model_id] = y_preds.tolist()
 
         metrics = {
             "f2": f2,
             "precision": precision,
             "recall": recall,
-            "accuracy": accuracy
+            "accuracy": accuracy,
+            "params": params
         }
         all_model_metrics[config_name][model_id.split(' ')[0]].append(metrics)
 
@@ -177,6 +239,7 @@ for config_name, paths in DATASETS.items():
             best_f2 = f2
             best_model_info = {
                 "model": "Isolation Forest",
+                "model_object": iso,
                 "anomalies_train": anomalies_train,
                 "anomalies_test": anomalies_test,
                 "true_anomalies": true_anomalies,
@@ -186,9 +249,6 @@ for config_name, paths in DATASETS.items():
                 "accuracy": accuracy,
                 "params": params
             }
-
-            # model_filename = f"Pickle/model_{config_name}_IF.pkl"
-            # joblib.dump(iso, model_filename)
 
     all_predictions.setdefault(config_name, {})
     # --- One-Class SVM ---
@@ -219,28 +279,31 @@ for config_name, paths in DATASETS.items():
         all_logs.append(full_log)
 
         model_id = f"One-Class SVM (kernel={kernel}, nu={nu}, gamma={gamma})"
+        all_model_objects[config_name].append((model_id, svm))
         all_predictions[config_name][model_id] = y_preds.tolist()
 
         metrics = {
             "f2": f2,
             "precision": precision,
             "recall": recall,
-            "accuracy": accuracy
+            "accuracy": accuracy,
+            "params": params
         }
         all_model_metrics[config_name][model_id.split(' ')[0]].append(metrics)
 
-    if f2 > best_f2:
-            best_f2 = f2
-            best_model_info = {
-                "model": "Isolation Forest",
-                "anomalies_train": anomalies_train,
-                "anomalies_test": anomalies_test,
-                "true_anomalies": true_anomalies,
-                "f2": f2,
-                "precision": precision,
-                "recall": recall,
-                "accuracy": accuracy,
-                "params": params
+        if f2 > best_f2:
+                best_f2 = f2
+                best_model_info = {
+                    "model": "One-Class SVM",
+                    "model_object": svm,
+                    "anomalies_train": anomalies_train,
+                    "anomalies_test": anomalies_test,
+                    "true_anomalies": true_anomalies,
+                    "f2": f2,
+                    "precision": precision,
+                    "recall": recall,
+                    "accuracy": accuracy,
+                    "params": params
             }
 
     all_predictions.setdefault(config_name, {})
@@ -249,7 +312,7 @@ for config_name, paths in DATASETS.items():
             PARAM_GRIDS["lof"]["n_neighbors"],
             PARAM_GRIDS["lof"]["contamination"]):
 
-        lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination)
+        lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination, novelty = True)
 
         precision, recall, accuracy, f2, log, y_preds, anomalies_train, anomalies_test, true_anomalies = evaluate_model(
             lof, X_train_scaled, X_test_scaled, y_test_true_binary,
@@ -270,20 +333,23 @@ for config_name, paths in DATASETS.items():
         all_logs.append(full_log)
 
         model_id = f"Local Outlier Factor (n_neighbors={n_neighbors}, contamination={contamination})"
+        all_model_objects[config_name].append((model_id, lof))
         all_predictions[config_name][model_id] = y_preds.tolist()
 
         metrics = {
             "f2": f2,
             "precision": precision,
             "recall": recall,
-            "accuracy": accuracy
+            "accuracy": accuracy,
+            "params": params
         }
         all_model_metrics[config_name][model_id.split(' ')[0]].append(metrics)
 
         if f2 > best_f2:
             best_f2 = f2
             best_model_info = {
-                "model": "Isolation Forest",
+                "model": "Local Outlier Factor",
+                "model_object": lof,
                 "anomalies_train": anomalies_train,
                 "anomalies_test": anomalies_test,
                 "true_anomalies": true_anomalies,
@@ -296,6 +362,25 @@ for config_name, paths in DATASETS.items():
 
     all_results[config_name] = best_model_info
 
+def recursively_convert(d):
+    if isinstance(d, defaultdict):
+        d = {k: recursively_convert(v) for k, v in d.items()}
+    return d
+
+all_model_metrics_serializable = recursively_convert(all_model_metrics)
+
+# Save results, logs, and metrics
+with open("PickleFiles/all_predictions.pkl", "wb") as f:
+    pickle.dump(all_predictions, f)
+
+with open("PickleFiles/all_model_metrics.pkl", "wb") as f:
+    pickle.dump(all_model_metrics_serializable, f)
+
+with open("PickleFiles/all_results.pkl", "wb") as f:
+    pickle.dump(all_results, f)
+
+with open("PickleFiles/all_logs.pkl", "wb") as f:
+    pickle.dump(all_logs, f)
 
 # --- Save to files ---
 with open("Model Results/best_model_summary.txt", "w", encoding="utf-8") as f:
@@ -314,13 +399,21 @@ with open("Model Results/best_model_summary.txt", "w", encoding="utf-8") as f:
             f.write(f"  - {k}: {v}\n")
         f.write("-" * 50 + "\n")
 
+# --- Save best model objects as pickle files ---
+for config, result in all_results.items():
+    model_obj = result.get("model_object", None)
+    if model_obj:
+        filename = f"PickleFiles/best_model_{config}.pkl"
+        with open(filename, "wb") as f:
+            pickle.dump(model_obj, f)
+
 # General model summary (time-aware name)
-with open("Model Results/model_summary_time.txt", "w", encoding="utf-8") as f:
+with open("Model Results/model_summary.txt", "w", encoding="utf-8") as f:
     for log in all_logs:
         f.write(log)
         f.write("-" * 60 + "\n")
 
-with open("Model Results/model_summary_time.txt", "a", encoding="utf-8") as f:
+with open("Model Results/model_summary.txt", "a", encoding="utf-8") as f:
     f.write("\n=== Best Metrics per Model Type (by Configuration) ===\n")
     for config, model_results in all_model_metrics.items():
         f.write(f"\n📦 Configuration: {config.upper()}\n")
@@ -340,15 +433,30 @@ with open("Model Results/model_summary_time.txt", "a", encoding="utf-8") as f:
             f.write(f"  - Recall:    {best_metrics['recall']:.4f}\n")
             f.write(f"  - Accuracy:  {best_metrics['accuracy']:.4f}\n")
 
-        # Optional: delta or % change vs best model
-        best_model_name = all_results[config]["model"]
-        best_f2 = all_results[config]["f2"]
-        f.write("\n📊 Comparison to Best Model:\n")
-        for model_name, best in best_per_model.items():
-            delta = best["f2"] - best_f2
-            pct_change = 100 * delta / best_f2 if best_f2 else 0
-            f.write(f"  - {model_name}: ΔF2 = {delta:.4f}, %Δ = {pct_change:.2f}%\n")
+            if "params" in best_metrics:
+                f.write("  - Hyperparameters:\n")
+                for k, v in best_metrics["params"].items():
+                    f.write(f"      • {k}: {v}\n")
+
         f.write("-" * 60 + "\n")
+
+model_dir = "PickleFiles/AllModels"
+
+# Clear old pickle files
+for file in os.listdir(model_dir):
+    if file.endswith(".pkl"):
+        os.remove(os.path.join(model_dir, file))
+
+for config, models in all_model_objects.items():
+    for model_id, model_obj in models:
+        # Clean model ID for filename
+        safe_model_id = model_id.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "").replace("=", "-")
+        filename = f"PickleFiles/AllModels/model_{config}_{safe_model_id}.pkl"
+        with open(filename, "wb") as f:
+            pickle.dump(model_obj, f)
+
+
+
 
 
 

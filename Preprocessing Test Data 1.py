@@ -1,38 +1,16 @@
-"""
-Preprocessing Pipeline for DAISY Clinical Test Data
-==============================================
-
-This script handles the preprocessing, merging, and imputation of lab results, vital signs,
-and demographic data from the DAISY study.
-
-Key Functions:
---------------
-- `lab(df)`: Cleans and reshapes lab test data (e.g., ALT, AST, Glucose).
-- `vitals(df)`: Processes vitals and calculates BMI.
-- `age(df)`: Extracts demographics (AGE, SEX) for Anorexia Nervosa patients.
-- `merge_lab_age(df_lab, df_age)`: Merges lab data with demographics.
-- `merge_final(df_lab_age, df_vitals)`: Combines all data into one dataset.
-- `mice_imputation(df)`: Imputes missing values using MICE with PMM.
-- `final_imputations_and_export(df)`: Final simple imputation and BMI recalculation.
-- `add_time_features(df)`: Creates delta and percent change features.
-
-Outputs:
---------
-- `BEP_imputed.csv`: Cleaned and imputed dataset.
-- `BEP_imputed_delta.csv`: Dataset with delta features.
-- `BEP_imputed_percentage_change.csv`: Dataset with percent-change features.
-"""
 import pandas as pd
 import numpy as np
 import miceforest as mf
 from sklearn.impute import SimpleImputer
 import random
 
+random.seed(42)
+
 #### specify the output paths of the created dataframes to be saved to CSVs here ####
-output_imputed_test = "Data/BEP_imputed_TEST.csv"
-output_imputed_time_feat_test = "Data/BEP_imputed_time_feat_TEST.csv"
-output_delta_test = "Data/BEP_imputed_delta_TEST.csv"
-output_percentage_change_test = "Data/BEP_imputed_percentage_change_TEST.csv"
+output_imputed_test = "Data/BEP_imputed_TEST1.csv"
+output_imputed_time_feat_test = "Data/BEP_imputed_time_feat_TEST1.csv"
+output_delta_test = "Data/BEP_imputed_delta_TEST1.csv"
+output_percentage_change_test = "Data/BEP_imputed_percentage_change_TEST1.csv"
 
 def demo_test(df_demo, df_main):
     """
@@ -72,7 +50,7 @@ def demo_test(df_demo, df_main):
     df = df[df['Geslacht'] != 'Man']
 
     # Convert to UNIX timestamp
-    df['DATE'] = df['datum_baseline'].astype('int64') // 10 ** 9
+    df['DATE'] = df['datum_baseline'].view('int64') // 10 ** 9
 
     # Convert to integers
     df['intid'] = df['intid'].astype(int)
@@ -128,7 +106,7 @@ def lab_test(df_lab, df_demo):
     # Convert date and extract UNIX timestamp
     df['DT_BEPALING'] = pd.to_datetime(df['DT_BEPALING'], dayfirst=True, errors='coerce')
     df['DATE'] = df['DT_BEPALING'].dt.normalize()
-    df['DATE'] = df['DATE'].astype('int64') // 10 ** 9
+    df['DATE'] = df['DATE'].view('int64') // 10 ** 9
 
     df['ggzob_id'] = df['ggzob_id'].astype(int)
 
@@ -194,7 +172,7 @@ def vitals_test(df_vitals, df_demo):
     df_vitals['DT_METING'] = pd.to_datetime(df_vitals['DT_METING'], dayfirst=True, errors='coerce')
     df_vitals['DATE'] = df_vitals['DT_METING'].dt.normalize()
     df_vitals['TIME'] = df_vitals['DT_METING'].dt.time
-    df_vitals['DATE'] = df_vitals['DATE'].astype('int64') // 10 ** 9  # Unix timestamp
+    df_vitals['DATE'] = df_vitals['DATE'].view('int64') // 10 ** 9  # Unix timestamp
 
     # Filter relevant measurement items
     df_vitals = df_vitals[df_vitals['O_METING'].isin([
@@ -311,6 +289,8 @@ def vitals_test(df_vitals, df_demo):
 
 
 def merge_test(df_demo, df_lab, df_vitals):
+    from datetime import timedelta
+    import pandas as pd
 
     # Ensure only patients in both datasets are kept
     df_lab = df_lab[df_lab['PATIENT_ID'].isin(df_demo['PATIENT_ID'])].copy()
@@ -359,6 +339,18 @@ def merge_test(df_demo, df_lab, df_vitals):
     df_combined.rename(columns={'SEQUENCE_final': 'SEQUENCE'}, inplace=True)
     df_combined.drop(columns=['SEQUENCE_merged'], inplace=True)
 
+    # correct this one weird date from 1670
+    df_combined.loc[df_combined['DATE'] == -9223372037, 'DATE'] = 1634428800
+
+    # Convert DATE from UNIX to datetime for filtering and time logic
+    df_combined['DATE'] = pd.to_datetime(df_combined['DATE'], unit='s')
+
+    # STEP 1: Limit each intake to 12 weeks
+    df_combined = df_combined[
+        df_combined.groupby(['PATIENT_ID', 'INTAKE_ID'])['DATE']
+        .transform(lambda x: x - x.min()) <= timedelta(weeks=12)
+    ]
+
     # Reorder columns
     new_column_order = [
         'PATIENT_ID', 'INTAKE_ID', 'SEQUENCE', 'DATE',
@@ -384,21 +376,21 @@ def merge_test(df_demo, df_lab, df_vitals):
     df_combined['Systolic'] = df_combined['Systolic'].replace(0, float('nan'))
     df_combined['Diastolic'] = df_combined['Diastolic'].replace(0, float('nan'))
 
-    # correct this one weird date from 1670
-    df_combined.loc[df_combined['DATE'] == -9223372037, 'DATE'] = 1634428800
-
-    # Convert DATE from UNIX to datetime (for calculation)
-    df_combined['DATE'] = pd.to_datetime(df_combined['DATE'], unit='s')
-
-    # Compute DAYS_SINCE_INTAKE per patient-intake group
+    # Compute DAYS_SINCE_ADMISSION per patient-intake group
     df_combined['DAYS_SINCE_ADMISSION'] = (
         df_combined.groupby(['PATIENT_ID', 'INTAKE_ID'])['DATE']
         .transform(lambda x: (x - x.min()).dt.days)
     )
 
-    # Convert DATE back to UNIX time
-    df_combined['DATE'] = df_combined['DATE'].astype('int64') // 10 ** 9
+    # Convert DATE back to UNIX timestamp
+    df_combined['DATE'] = df_combined['DATE'].view('int64') // 10 ** 9
+
+    # Preserve control labels
+    df_combined['CONTROL'] = 0
+
     return df_combined
+
+
 
 
 def mice_imputation(df):
@@ -425,21 +417,24 @@ def mice_imputation(df):
     # Subset the dataframe
     df_subset = df[cols_to_impute].copy()
 
+    for col in df_subset.columns:
+        df_subset[col] = pd.to_numeric(df_subset[col], errors='coerce').astype('float64')
+
     # Initialize the MICE imputation kernel
     kernel = mf.ImputationKernel(
         df_subset,
-        num_datasets=3,
-        random_state=123
+        datasets=3,
+        random_state=123,
+        mean_match_candidates=5
     )
 
     # Perform imputation with Predictive Mean Matching
     kernel.mice(
-        iterations=20,
-        mean_match_candidates=5
+        iterations=20
     )
 
     # Randomly select one of the imputed datasets
-    random_index = random.randint(0, kernel.num_datasets - 1)
+    random_index = random.randint(0, kernel.dataset_count() - 1)
 
     # Extract the randomly selected imputed dataset
     imputed_df = kernel.complete_data(dataset=random_index)
@@ -465,6 +460,10 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
         :param output_path: str, optional path to save the imputed DataFrame as a CSV file (not used here directly).
         :return: pandas DataFrame with completed AGE, HEIGHT, and updated BMI.
     """
+    # Convert nullable integers to regular floats before sklearn imputation
+    df['AGE'] = pd.to_numeric(df['AGE'], errors='coerce').astype('float64')
+    df['Height (m)'] = pd.to_numeric(df['Height (m)'], errors='coerce').astype('float64')
+
     # Mean imputation for numerical columns
     num_imputer = SimpleImputer(strategy='mean')
     df[['AGE', 'Height (m)']] = num_imputer.fit_transform(df[['AGE', 'Height (m)']])
@@ -472,41 +471,7 @@ def final_imputations_and_export(df, output_path='BEP_imputed.csv'):
     # Recalculate BMI
     df['BMI'] = df['Weight (kg)'] / (df['Height (m)'] ** 2)
 
-    # # Step 1: Sort and assign proper SEQUENCE
-    # df = df.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'DATE']).copy()
-    # df['SEQUENCE'] = df.groupby(['PATIENT_ID', 'INTAKE_ID']).cumcount() + 1
-    #
-    # # Step 2: Identify the first measurement per group (SEQUENCE == 1)
-    # mask_first = df['SEQUENCE'] == 1
-    #
-    # # Step 3: Remove those first measurements
-    # df = df[~mask_first].copy()
-    #
-    # # Step 4: Recalculate SEQUENCE (starting from 1 again per group)
-    # df = df.sort_values(by=['PATIENT_ID', 'INTAKE_ID', 'DATE']).copy()
-    # df['SEQUENCE'] = df.groupby(['PATIENT_ID', 'INTAKE_ID']).cumcount() + 1
-
     return df
-
-def standardize_by_first_timepoint(df, feature_cols):
-    id_col = 'PATIENT_ID'
-    time_col = 'SEQUENCE'
-    df_standardized = df.copy()
-
-    for pid, group in df.groupby(id_col):
-        first_time = group[time_col].min()
-        baseline = group[group[time_col] == first_time]
-
-        mean = baseline[feature_cols].mean()
-        std = baseline[feature_cols].std(ddof=0)
-
-        # Avoid division by zero
-        std = std.replace(0, 1)
-
-        standardized_values = (group[feature_cols] - mean) / std
-        df_standardized.loc[group.index, feature_cols] = standardized_values
-
-    return df_standardized
 
 
 def RFS_labels(df):
@@ -597,7 +562,6 @@ def add_time_features(df):
 
     return df_delta, df_pct
 
-
 print("🔄 Loading and preprocessing demographics data...")
 df_demo = demo_test(pd.read_csv("../anonymized_Labels_refeeding.csv", sep='\t'), pd.read_csv("Data/BEP_imputed.csv"))
 print("✅ Demographics data preprocessed.\n")
@@ -611,7 +575,7 @@ df_vitals = vitals_test(pd.read_csv("../anonymized_Labels_refeeding_metingen.csv
 print("✅ Vitals data preprocessed.\n")
 
 print("🔗 Merging datasets together...")
-df_merge= merge_test(df_demo, df_lab, df_vitals)
+df_merge = merge_test(df_demo, df_lab, df_vitals)
 print("✅ Datasets merged.\n")
 
 print("📊 Here's a quick look at the merged dataset (first 10 rows):\n")
@@ -628,9 +592,6 @@ print("🛠️ Standardising all the data...")
 print("🛠️ Saving the imputed dataset to a CSV file.")
 df_final = final_imputations_and_export(df_impute)
 df_final = RFS_labels(df_final)
-# df_final = standardize_by_first_timepoint(df_final,
-#                                           ['Weight (kg)', 'BMI', 'Temperature (C)', 'Systolic','Diastolic',
-#                                            'ALT', 'AST', 'Phosphate', 'Glucose', 'Potassium', 'Leucocytes', 'Magnesium'])
 df_final.to_csv(output_imputed_test, index=False)
 print(f"✅ Final dataset saved to: {output_imputed_test}\n")
 

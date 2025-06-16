@@ -1,14 +1,3 @@
-/Data/BEP.csv
-/Data/BEP_imputed.csv
-/Data/BEP_timefeat.csv
-/Data/BEP_imputed_percentage_change.csv
-/Data/BEP_imputed_delta.csv
-/Data/BEP_imputed_delta_TEST.csv
-/Data/BEP_imputed_TEST.csv
-/Data/BEP_imputed_percentage_change_TEST.csv
-/Model Results/best_model_summary_time.txt
-/Model Results/best_model_summary_raw.txt
-/Model Results/best_model_summary.txt
-/DIFFI/
 /Data/
-/Model Results/
+/PickleFiles/
+/.venv/

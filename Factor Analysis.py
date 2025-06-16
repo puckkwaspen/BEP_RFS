@@ -12,6 +12,37 @@ warnings.filterwarnings("ignore", message="'force_all_finite' was renamed to 'en
 # Load data
 df = pd.read_csv("Data/BEP_imputed.csv")
 
+####################### PLOT 1 --> CORRELATION MATRIX ###########################################
+
+features = ['Phosphate', 'Potassium', 'Magnesium', 'ALT', 'AST', 'BMI', 'AGE']
+X = df[features]
+X_scaled = RobustScaler().fit_transform(X)
+
+# Set up figure and axes with constrained layout
+fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
+
+# Plot correlation matrix
+corr_matrix = pd.DataFrame(X_scaled).corr(method='spearman')
+im = ax.imshow(corr_matrix, cmap="coolwarm", vmin=-1, vmax=1)
+
+# Tick labels
+ax.set_xticks(range(len(features)))
+ax.set_xticklabels(features, rotation=45, ha='right')
+ax.set_yticks(range(len(features)))
+ax.set_yticklabels(features)
+
+# Title with padding to prevent overlap
+ax.set_title("Correlation Matrix", pad=10)
+
+# Add correlation values
+for i in range(len(features)):
+    for j in range(len(features)):
+        ax.text(j, i, f"{corr_matrix[i, j]:.2f}", ha='center', va='center', color='black', fontsize=10)
+
+plt.show()
+
+###########################################################################################
+
 # Select enzyme + electrolyte features
 features = ['Phosphate', 'Potassium', 'Magnesium', 'ALT', 'AST']
 X = df[features]
@@ -22,7 +53,7 @@ plt.title('Log-Transformed Density Plot of AST')
 plt.xlabel('log(AST + 1)')
 plt.show()
 
-################# PLOT 1 --> CORRELATION MATRIX #################
+################# PLOT 2 --> CORRELATION MATRIX #################
 
 # Set up figure and axes with constrained layout
 fig, ax = plt.subplots(figsize=(6, 5), constrained_layout=True)
@@ -50,7 +81,7 @@ plt.show()
 #######################################################################
 
 
-################# PLOT 2 --> SCREE PLOT #################
+################# PLOT 3 --> SCREE PLOT #################
 # FA setup
 fa = FactorAnalyzer(n_factors=5, method='principal')  # 'principal' = PAF
 fa.fit(X_scaled)
@@ -72,7 +103,7 @@ plt.show()
 #######################################################################
 
 
-################# PLOT 3 --> EXPLAINED AND CUMULATIVE VARIANCE #################
+################# PLOT 4 --> EXPLAINED AND CUMULATIVE VARIANCE #################
 # Get variance outputs
 variance, prop_var, cum_var = fa.get_factor_variance()
 # Plot
@@ -103,7 +134,7 @@ print("Cumulative variance per factor:", np.round(cum_var, 3))
 #######################################################################
 
 
-################# PLOT 4 --> FACTOR ANALYSIS LOADINGS #################
+################# PLOT 5 --> FACTOR ANALYSIS LOADINGS #################
 
 # Define number of factors and methods
 n_comps = 2
