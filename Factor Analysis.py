@@ -37,7 +37,7 @@ ax.set_title("Correlation Matrix", pad=10)
 # Add correlation values
 for i in range(len(features)):
     for j in range(len(features)):
-        ax.text(j, i, f"{corr_matrix[i, j]:.2f}", ha='center', va='center', color='black', fontsize=10)
+        ax.text(j, i, f"{corr_matrix.iloc[i, j]:.2f}", ha='center', va='center', color='black', fontsize=10)
 
 plt.show()
 

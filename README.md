@@ -68,14 +68,14 @@ Follow these steps to set up the environment and run the project locally.
 
 The following files are required for the data loading and preprocessing functions.  
 Please ensure that the files remain in their respective folders and that names do not change (of both files and folders). If they do, you can either change the names back or edit the paths in the respective code files.
-- `anonymizedDatasets/` for training data
+- `annonymizedDatasets/` for training data
 - `Puck/` for RFS test data
 - `Daisy/` for control test data
 
 **Training Data:**
-- `anonymizedDatasets/maskedDAIsy_LabCombinedNew.csv`
-- `anonymizedDatasets/maskedDAIsy_Vitals.csv`
-- `anonymizedDatasets/maskedDAIsy_AllDatasetsCombinedWoRepIntakes_v1.tsv`
+- `annonymizedDatasets/maskedDAIsy_LabCombinedNew.csv`
+- `annonymizedDatasets/maskedDAIsy_Vitals.csv`
+- `annonymizedDatasets/maskedDAIsy_AllDatasetsCombinedWoRepIntakes_v1.tsv`
 
 **Testing Data:**  
 RFS Group:

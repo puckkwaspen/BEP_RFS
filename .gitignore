@@ -1,3 +1,26 @@
+# Virtual environment
+.venv/
+
+# PyCharm project files
+.idea/
+
+# Data and output folders
 /Data/
 /PickleFiles/
-/.venv/
+ModelResults/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Environment files (if you ever generate them)
+.env
+*.env
