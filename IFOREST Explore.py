@@ -77,8 +77,45 @@ test_df_scaled[blood_features] = X_test_scaled[blood_features]
 test_df['prediction'] = y_test_pred_binary
 test_df['true_label'] = y_true
 
+# check misclassified patients
+miss_class = test_df[(test_df['prediction'] == 0) & (test_df['true_label'] == 0)]
+print(f"The following patients do not have a RFS or ASPEN 0 label:{set(miss_class['PATIENT_ID'])}")
+
+# Find the patient IDs where control = 0, and they did not have any prediction = 1 labels
+# Step 1: Patients with control == 0
+patients_control_0 = test_df[test_df['CONTROL'] == 0]
+
+# Step 2: Patients that ever had prediction == 1
+patients_with_pred1 = set(test_df.loc[test_df['RFS'] == 1, 'PATIENT_ID'])
+
+# Step 3: Filter out those with any prediction == 1
+valid_patients = patients_control_0[~patients_control_0['PATIENT_ID'].isin(patients_with_pred1)]
+
+# Step 4: Get unique patient IDs
+unique_patient_ids = valid_patients['PATIENT_ID'].unique()
+print(f"Patient IDs with known RFS, but no label {unique_patient_ids}")
+
+# Step 1: Patients that ever had RFS == 1 or PREDICTION == 1
+bad_patients = set(
+    test_df.loc[
+        (test_df['RFS'] == 1) | (test_df['prediction'] == 1),
+        'PATIENT_ID'
+    ]
+)
+
+# Step 2: Patients that have CONTROL == 0
+patients_control_0 = test_df.loc[test_df['CONTROL'] == 0, 'PATIENT_ID']
+
+# Step 3: Keep only patients with CONTROL == 0 and no RFS=1 or PREDICTION=1 anywhere
+valid_patient_ids = patients_control_0[~patients_control_0.isin(bad_patients)].unique()
+
+print(f"Patients with CONTROL=0 and no RFS=1 or PREDICTION=1 anywhere: {valid_patient_ids}")
+
+
+
 false_negatives = test_df[(test_df['prediction'] == 0) & (test_df['true_label'] == 1)]
 print(f"There are {len(false_negatives)} false negatives")
+print(f"Their patient IDs are: {list(false_negatives['PATIENT_ID'])}")
 test_df_scaled = test_df.copy()
 test_df_scaled[blood_features] = X_test_scaled[blood_features]  # Scaled blood features
 
